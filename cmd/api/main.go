@@ -6,6 +6,7 @@ import (
 	"github.com/egutsenf96/warego/internal/controller/login"
 	"github.com/egutsenf96/warego/internal/controller/signup"
 	"github.com/egutsenf96/warego/internal/database"
+	"github.com/egutsenf96/warego/internal/migrations"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,12 @@ func main() {
 	{
 		r.POST("/login", login.GetLogin)
 		r.POST("/sign-up", signup.CreateUser)
+	}
+
+	r.Group("/sync")
+	{
+		r.GET("/schema", migrations.UserMigrationsUP)
+		r.POST("/schema", migrations.UserMigrationsDown)
 	}
 
 	r.Run() // listen and serve on

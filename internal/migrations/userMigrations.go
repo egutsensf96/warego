@@ -5,9 +5,10 @@ import (
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
+	"github.com/gin-gonic/gin"
 )
 
-func UserMigrationsUP() {
+func UserMigrationsUP(c *gin.Context) {
 	db, err := database.IntialDB()
 	if err != nil {
 		log.Fatal(err)
@@ -15,7 +16,11 @@ func UserMigrationsUP() {
 	db.Migrator().CreateTable(&models.UserModel{})
 }
 
-func UserMigrationsDown() {
+func UserMigrationsDown(c *gin.Context) {
+	parameter := c.Query("delete")
+	if parameter != "" {
+		log.Fatal("Parameter not valid")
+	}
 	db, err := database.IntialDB()
 	if err != nil {
 		log.Fatal(err)
