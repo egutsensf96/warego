@@ -8,15 +8,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func UserMigrationsUP(c *gin.Context) {
+func TrackerMigrationsUp(c *gin.Context) {
 	db, err := database.IntialDB()
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().CreateTable(&models.User{})
+	db.Migrator().CreateTable(&models.Tracker{})
 }
 
-func UserMigrationsDown(c *gin.Context) {
+func TrackerMigrationsDown(c *gin.Context) {
 	parameter := c.Query("delete")
 	if parameter != "" {
 		log.Fatal("Parameter not valid")
@@ -25,5 +25,5 @@ func UserMigrationsDown(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().DropTable(&models.User{})
+	db.Migrator().DropTable(&models.Tracker{})
 }

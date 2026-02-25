@@ -23,16 +23,29 @@ func main() {
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 	r.Use(cors.Default()) // All origins allowed by default
 
-	r.Group("/auth")
+	auth := r.Group("/auth")
 	{
-		r.POST("/login", login.GetLogin)
-		r.POST("/sign-up", signup.CreateUser)
+		auth.POST("/login", login.GetLogin)
+		auth.POST("/sign-up", signup.CreateUser)
 	}
 
-	r.Group("/sync")
+	sync := r.Group("/sync")
 	{
-		r.GET("/schema", migrations.UserMigrationsUP)
-		r.POST("/schema", migrations.UserMigrationsDown)
+		sync.GET("/schema/role", migrations.RoleMigrationsUp)
+		sync.POST("/schema/role", migrations.RoleMigrationsDown)
+		sync.GET("/schema/track", migrations.TrackerMigrationsUp)
+		sync.POST("/schema/track", migrations.TrackerMigrationsDown)
+		sync.GET("/schema/company", migrations.CompanyMigrationsUp)
+		sync.POST("/schema/company", migrations.CompanyMigrationsDown)
+		sync.GET("/schema/category", migrations.CategoryMigrationUp)
+		sync.POST("/schema/category", migrations.CategoryMigrationDown)
+		sync.GET("/schema/draw", migrations.DrawMigrationsUp)
+		sync.POST("/schema/draw", migrations.DrawMigrationsDown)
+		sync.GET("/schema/product", migrations.ProductMigrationsUp)
+		sync.POST("/schema/product", migrations.ProductMigrationsDown)
+		sync.GET("/schema/user", migrations.UserMigrationsUP)
+		sync.POST("/schema/user", migrations.UserMigrationsDown)
+
 	}
 
 	r.Run() // listen and serve on
