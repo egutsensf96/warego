@@ -8,7 +8,7 @@ import (
 	"github.com/egutsenf96/warego/internal/controller/login"
 	"github.com/egutsenf96/warego/internal/controller/signup"
 	"github.com/egutsenf96/warego/internal/database"
-	"github.com/egutsenf96/warego/internal/migrations"
+	"github.com/egutsenf96/warego/internal/database/migrations"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
