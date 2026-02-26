@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
@@ -13,7 +14,15 @@ func RoleMigrationsUp(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().CreateTable(&models.Role{})
+	err = db.Migrator().CreateTable(&models.Role{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Role migration execute succesfully",
+	})
 }
 
 func RoleMigrationsDown(c *gin.Context) {
@@ -25,5 +34,13 @@ func RoleMigrationsDown(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().DropTable(&models.Role{})
+	err = db.Migrator().DropTable(&models.Role{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Role migration execute succesfully",
+	})
 }

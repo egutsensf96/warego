@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
@@ -13,7 +14,15 @@ func CategoryMigrationUp(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().CreateTable(&models.Category{})
+	err = db.Migrator().CreateTable(&models.Category{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Category migration execute succesfully",
+	})
 }
 
 func CategoryMigrationDown(c *gin.Context) {
@@ -25,5 +34,13 @@ func CategoryMigrationDown(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().DropTable(&models.Category{})
+	err = db.Migrator().DropTable(&models.Category{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Category migration execute succesfully",
+	})
 }

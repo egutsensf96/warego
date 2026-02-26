@@ -10,3 +10,7 @@ type Draw struct {
 	User_Id    User    `gorm:"foreignKey:User_Id;references:Id_User"`
 	CreatedAt  time.Time
 }
+
+func (Draw) TableName() string {
+	return "Draw"
+}

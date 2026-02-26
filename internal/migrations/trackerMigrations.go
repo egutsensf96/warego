@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
@@ -13,7 +14,15 @@ func TrackerMigrationsUp(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().CreateTable(&models.Tracker{})
+	err = db.Migrator().CreateTable(&models.Tracker{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Tracker migration execute succesfully",
+	})
 }
 
 func TrackerMigrationsDown(c *gin.Context) {
@@ -25,5 +34,13 @@ func TrackerMigrationsDown(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().DropTable(&models.Tracker{})
+	err = db.Migrator().DropTable(&models.Tracker{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Tracker migration execute succesfully",
+	})
 }

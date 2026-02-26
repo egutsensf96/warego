@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
@@ -13,7 +14,15 @@ func DrawMigrationsUp(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().CreateTable(&models.Draw{})
+	err = db.Migrator().CreateTable(&models.Draw{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Draw migration execute succesfully",
+	})
 }
 
 func DrawMigrationsDown(c *gin.Context) {
@@ -25,5 +34,13 @@ func DrawMigrationsDown(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Migrator().DropTable(&models.Draw{})
+	err = db.Migrator().DropTable(&models.Draw{})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err,
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Draw migration execute succesfully",
+	})
 }

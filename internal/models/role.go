@@ -8,3 +8,7 @@ type Role struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+func (Role) TableName() string {
+	return "Role"
+}

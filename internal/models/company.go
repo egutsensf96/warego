@@ -8,3 +8,7 @@ type Company struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+func (Company) TableName() string {
+	return "Company"
+}
