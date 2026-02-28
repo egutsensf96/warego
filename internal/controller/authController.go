@@ -14,7 +14,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func GetLogin(c *gin.Context) {
+func SignUp(c *gin.Context) {
+	body := &models.User{}
+	db, err := database.IntialDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if c.Bind(&body) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to read body",
+		})
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), 15)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to hash password",
+		})
+		return
+	}
+	user := models.User{Name: body.Name, LastName: body.LastName, Cargo: body.Cargo,
+		Permisos: body.Permisos, Email: body.Email, Password: string(hash),
+		Company_Id: body.Company_Id, Role_Id: body.Role_Id, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	db.Create(&user)
+	if db.Error != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to create user",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data": user,
+	})
+}
+
+func SingIn(c *gin.Context) {
 	var body struct {
 		email    string
 		password string

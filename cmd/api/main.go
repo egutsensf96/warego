@@ -42,7 +42,8 @@ func main() {
 
 	auth := r.Group("/auth")
 	{
-		auth.POST("/login", controller.GetLogin)
+		auth.POST("/sing-in", controller.SingIn)
+		auth.POST("/sign-up", controller.SignUp)
 		auth.GET("/check", middleware.JwtValidate, controller.CheckAuth)
 
 	}
