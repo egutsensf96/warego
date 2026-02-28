@@ -8,6 +8,7 @@ import (
 	"github.com/egutsenf96/warego/internal/controller"
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/database/migrations"
+	"github.com/egutsenf96/warego/internal/middleware"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -42,7 +43,7 @@ func main() {
 	auth := r.Group("/auth")
 	{
 		auth.POST("/login", controller.GetLogin)
-		auth.GET("/check", middleware.jwtValidate, controller.CheckAuth)
+		auth.GET("/check", middleware.JwtValidate, controller.CheckAuth)
 
 	}
 

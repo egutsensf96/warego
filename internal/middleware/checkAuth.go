@@ -12,7 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func jwtValidate(c *gin.Context) {
+func JwtValidate(c *gin.Context) {
 	db, err := database.IntialDB()
 	tokenString, err := c.Cookie("Authorization")
 	if err != nil {
