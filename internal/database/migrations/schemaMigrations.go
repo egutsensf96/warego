@@ -15,13 +15,18 @@ func SchemaMigrations(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "Parameter not allowed",
 			})
-
+			return
 		}
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "Parameter not allowed",
+		})
+		return
 	}
 	if schema != "true" || delete != "true" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "Value not found",
 		})
+		return
 	}
 	if schema == "true" {
 		RoleMigrationsUp()
@@ -35,6 +40,7 @@ func SchemaMigrations(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{
 			"message": "Execute successfully all migrations",
 		})
+		return
 	}
 	if delete == "true" {
 		TrackerMigrationsDown()
@@ -47,5 +53,6 @@ func SchemaMigrations(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{
 			"message": "Execute successfully all migrations",
 		})
+		return
 	}
 }

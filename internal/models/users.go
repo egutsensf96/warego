@@ -10,8 +10,8 @@ type User struct {
 	LastName   string
 	Cargo      string
 	Permisos   string
-	email      string
-	password   string
+	Email      string
+	Password   string
 	Company_Id int
 	Company    Company `gorm:"foreignKey:Company_Id;references:Id_Company"`
 	Role_Id    int
