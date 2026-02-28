@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/egutsenf96/warego/internal/controller/login"
 	"github.com/egutsenf96/warego/internal/controller/signup"
@@ -22,8 +21,9 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 	r := gin.Default()
+
 	r.Use(func(c *gin.Context) {
-		if c.Request.Host != os.Getenv("SERVER") {
+		if c.Request.Host != "localhost:8080" {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid host header"})
 			return
 		}
@@ -45,24 +45,7 @@ func main() {
 		auth.POST("/sign-up", signup.CreateUser)
 	}
 
-	sync := r.Group("/sync")
-	{
-		sync.GET("/schema/role", migrations.RoleMigrationsUp)
-		sync.POST("/schema/role", migrations.RoleMigrationsDown)
-		sync.GET("/schema/track", migrations.TrackerMigrationsUp)
-		sync.POST("/schema/track", migrations.TrackerMigrationsDown)
-		sync.GET("/schema/company", migrations.CompanyMigrationsUp)
-		sync.POST("/schema/company", migrations.CompanyMigrationsDown)
-		sync.GET("/schema/category", migrations.CategoryMigrationUp)
-		sync.POST("/schema/category", migrations.CategoryMigrationDown)
-		sync.GET("/schema/draw", migrations.DrawMigrationsUp)
-		sync.POST("/schema/draw", migrations.DrawMigrationsDown)
-		sync.GET("/schema/product", migrations.ProductMigrationsUp)
-		sync.POST("/schema/product", migrations.ProductMigrationsDown)
-		sync.GET("/schema/user", migrations.UserMigrationsUP)
-		sync.POST("/schema/user", migrations.UserMigrationsDown)
-
-	}
+	r.GET("/sync", migrations.SchemaMigrations)
 
 	r.Run() // listen and serve on
 }

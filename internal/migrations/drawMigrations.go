@@ -2,45 +2,26 @@ package migrations
 
 import (
 	"log"
-	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
-	"github.com/gin-gonic/gin"
 )
 
-func DrawMigrationsUp(c *gin.Context) {
+func DrawMigrationsUp() {
 	db, err := database.IntialDB()
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = db.Migrator().CreateTable(&models.Draw{})
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err,
-		})
-	}
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "Draw migration execute succesfully",
-	})
+	db.Migrator().CreateTable(&models.Draw{})
+
 }
 
-func DrawMigrationsDown(c *gin.Context) {
-	parameter := c.Query("delete")
-	if parameter != "" {
-		log.Fatal("Parameter not valid")
-	}
+func DrawMigrationsDown() {
+
 	db, err := database.IntialDB()
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = db.Migrator().DropTable(&models.Draw{})
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err,
-		})
-	}
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "Draw migration execute succesfully",
-	})
+	db.Migrator().DropTable(&models.Draw{})
+
 }

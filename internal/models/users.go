@@ -12,8 +12,10 @@ type User struct {
 	Permisos   string
 	email      string
 	password   string
-	Company_Id Company `gorm:"foreignKey:Company_Id;references:Id_Company"`
-	Role_Id    Role    `gorm:"foreignKey:Role_Id;references:Id_Role"`
+	Company_Id int
+	Company    Company `gorm:"foreignKey:Company_Id;references:Id_Company"`
+	Role_Id    int
+	Role       Role `gorm:"foreignKey:Role_Id;references:Id_Role"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

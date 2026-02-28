@@ -10,8 +10,10 @@ type Product struct {
 	Stock       float32
 	Image       *string
 	Source      *string
-	Category_Id Category `gorm:"foreignKey:Category_Id;references:Id_Category"`
-	User_Id     User     `gorm:"foreignKey:User_Id;references:Id_User"`
+	Category_Id int
+	Category    Category `gorm:"foreignKey:Category_Id;references:Id_Category"`
+	User_Id     int
+	User        User `gorm:"foreignKey:User_Id;references:Id_User"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
