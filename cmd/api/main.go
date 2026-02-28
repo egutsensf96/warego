@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/egutsenf96/warego/internal/controller/login"
 	"github.com/egutsenf96/warego/internal/controller/signup"
@@ -23,7 +24,7 @@ func main() {
 	r := gin.Default()
 
 	r.Use(func(c *gin.Context) {
-		if c.Request.Host != "localhost:8080" {
+		if c.Request.Host != os.Getenv("SERVER") {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid host header"})
 			return
 		}
