@@ -5,8 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/egutsenf96/warego/internal/controller/login"
-	"github.com/egutsenf96/warego/internal/controller/signup"
+	"github.com/egutsenf96/warego/internal/controller"
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/database/migrations"
 	"github.com/gin-contrib/cors"
@@ -42,8 +41,9 @@ func main() {
 
 	auth := r.Group("/auth")
 	{
-		auth.POST("/login", login.GetLogin)
-		auth.POST("/sign-up", signup.CreateUser)
+		auth.POST("/login", controller.GetLogin)
+		auth.GET("/check", middleware.jwtValidate, controller.CheckAuth)
+
 	}
 
 	r.GET("/sync", migrations.SchemaMigrations)

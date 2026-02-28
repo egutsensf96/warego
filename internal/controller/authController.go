@@ -1,4 +1,4 @@
-package login
+package controller
 
 import (
 	"log"
@@ -48,5 +48,12 @@ func GetLogin(c *gin.Context) {
 	c.SetCookie("Authorization", tokenString, 3600*24*7, "/", "", false, true)
 	c.JSON(http.StatusAccepted, gin.H{
 		"mesg": "ok",
+	})
+}
+
+func CheckAuth(c *gin.Context) {
+	user, _ := c.Get("user")
+	c.JSON(http.StatusOK, gin.H{
+		"msg": user,
 	})
 }
