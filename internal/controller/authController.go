@@ -96,3 +96,78 @@ func CheckAuth(c *gin.Context) {
 		"msg": user,
 	})
 }
+
+func GetAllUser(c *gin.Context) {
+	var users []models.User
+	db, err := database.IntialDB()
+	pgl, err := db.DB()
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	db.Find(&users)
+	pgl.Close()
+	c.JSON(http.StatusOK, gin.H{
+		"result": users,
+	})
+}
+func GetUserById(c *gin.Context) {
+	var user models.User
+	db, err := database.IntialDB()
+	pgl, err := db.DB()
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	db.First(&user, c.Param("id"))
+	pgl.Close()
+	c.JSON(http.StatusOK, gin.H{
+		"result": user,
+	})
+}
+func UpdateUser(c *gin.Context) {
+	body := &models.User{}
+	if c.Bind(&body) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to read body",
+		})
+		return
+	}
+	db, err := database.IntialDB()
+	pgl, err := db.DB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	passwd, err := bcrypt.GenerateFromPassword([]byte(body.Password), 15)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"err": err,
+		})
+		return
+	}
+	db.Model(&models.User{}).Where("id_user = ?", c.Param("id")).Updates(models.User{Name: body.Name,
+		LastName: body.LastName, Cargo: body.Cargo, Role_Id: body.Role_Id,
+		Permisos: body.Permisos, Company_Id: body.Company_Id, Password: string(passwd), UpdatedAt: time.Now()})
+	if db.Error != nil {
+		pgl.Close()
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to update user",
+		})
+		return
+	}
+	pgl.Close()
+	c.JSON(http.StatusOK, gin.H{
+		"msg": "Update succesfully",
+	})
+
+	var users []models.User
+
+	db.Find(&users)
+	pgl.Close()
+	c.JSON(http.StatusOK, gin.H{
+		"result": users,
+	})
+}

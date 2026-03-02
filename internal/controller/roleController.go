@@ -36,10 +36,10 @@ func AddRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": data,
 	})
-
 }
 
-func GetAllRole(c *gin.Context) {
+func GetRoleById(c *gin.Context) {
+	var role models.Role
 	db, err := database.IntialDB()
 	pgl, err := db.DB()
 
@@ -47,12 +47,26 @@ func GetAllRole(c *gin.Context) {
 		log.Fatal(err)
 		return
 	}
-
-	// Get all records
-	result := db.Find(&models.Role{})
+	db.First(&role, c.Param("id"))
 	pgl.Close()
 	c.JSON(http.StatusOK, gin.H{
-		"result": result,
+		"result": role,
+	})
+}
+
+func GetAllRole(c *gin.Context) {
+	var roles []models.Role
+	db, err := database.IntialDB()
+	pgl, err := db.DB()
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	db.Find(&roles)
+	pgl.Close()
+	c.JSON(http.StatusOK, gin.H{
+		"result": roles,
 	})
 }
 

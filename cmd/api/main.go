@@ -73,6 +73,7 @@ func main() {
 	role := r.Group("/role")
 	{
 		role.GET("/", controller.GetAllRole)
+		role.GET("/:id", controller.GetRoleById)
 		role.POST("/", controller.AddRole)
 		role.PATCH("/:id", controller.UpdateRole)
 		role.DELETE("/:id", controller.DeleteRole)
