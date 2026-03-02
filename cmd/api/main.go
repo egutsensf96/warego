@@ -3,10 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/egutsenf96/warego/internal/controller"
-	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/database/migrations"
 	"github.com/egutsenf96/warego/internal/middleware"
 	"github.com/gin-contrib/cors"
@@ -17,14 +15,13 @@ import (
 
 func main() {
 	err := godotenv.Load()
-	database.IntialDB() //Open DB conection
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 	r := gin.Default()
 
 	r.Use(func(c *gin.Context) {
-		if c.Request.Host != os.Getenv("SERVER") {
+		if c.Request.Host != "localhost:8080" {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid host header"})
 			return
 		}
@@ -46,6 +43,48 @@ func main() {
 		auth.POST("/sign-up", controller.SignUp)
 		auth.GET("/check", middleware.JwtValidate, controller.CheckAuth)
 
+	}
+
+	product := r.Group("/product")
+	{
+		product.GET("/")
+		product.POST("/")
+		product.PATCH("/")
+		product.PUT("/")
+		product.DELETE("/:id")
+	}
+	category := r.Group("/category")
+	{
+		category.GET("/")
+		category.POST("/")
+		category.PATCH("/")
+		category.PUT("/")
+		category.DELETE("/:id")
+	}
+
+	company := r.Group("/company")
+	{
+		company.GET("/")
+		company.POST("/")
+		company.PATCH("/")
+		company.PUT("/")
+		company.DELETE("/:id")
+	}
+	role := r.Group("/role")
+	{
+		role.GET("/", controller.GetAllRole)
+		role.POST("/", controller.AddRole)
+		role.PATCH("/:id", controller.UpdateRole)
+		role.DELETE("/:id", controller.DeleteRole)
+	}
+
+	draw := r.Group("/draw")
+	{
+		draw.GET("/")
+		draw.POST("/")
+		draw.PATCH("/")
+		draw.PUT("/")
+		draw.DELETE("/:id")
 	}
 
 	r.GET("/sync", migrations.SchemaMigrations)

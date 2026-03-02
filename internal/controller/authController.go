@@ -17,6 +17,7 @@ import (
 func SignUp(c *gin.Context) {
 	body := &models.User{}
 	db, err := database.IntialDB()
+	pgl, err := db.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -38,7 +39,9 @@ func SignUp(c *gin.Context) {
 		Permisos: body.Permisos, Email: body.Email, Password: string(hash),
 		Company_Id: body.Company_Id, Role_Id: body.Role_Id, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	db.Create(&user)
+	pgl.Close()
 	if db.Error != nil {
+
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Failed to create user",
 		})
@@ -61,6 +64,7 @@ func SingIn(c *gin.Context) {
 		return
 	}
 	db, err := database.IntialDB()
+	pgl, err := db.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,7 +82,7 @@ func SingIn(c *gin.Context) {
 	})
 
 	tokenString, err := token.SignedString(os.Getenv("SECRETKEY"))
-
+	pgl.Close()
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("Authorization", tokenString, 3600*24*7, "/", "", false, true)
 	c.JSON(http.StatusAccepted, gin.H{
