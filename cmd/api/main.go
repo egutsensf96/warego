@@ -14,80 +14,86 @@ import (
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found")
 	}
+
 	r := gin.Default()
 
+	// 1. GLOBAL MIDDLEWARE
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
+	r.Use(cors.Default())
+
+	// Security Headers Middleware
 	r.Use(func(c *gin.Context) {
-		if c.Request.Host != "localhost:8080" {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid host header"})
-			return
-		}
 		c.Header("X-Frame-Options", "DENY")
-		c.Header("Content-Security-Policy", "default-src 'self'; connect-src *; font-src *; script-src-elem * 'unsafe-inline'; img-src * data:; style-src * 'unsafe-inline';")
-		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		c.Header("Referrer-Policy", "strict-origin")
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("Permissions-Policy", "geolocation=(),midi=(),sync-xhr=(),microphone=(),camera=(),magnetometer=(),gyroscope=(),fullscreen=(self),payment=()")
+		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Next()
 	})
-	r.Use(gzip.Gzip(gzip.DefaultCompression))
-	r.Use(cors.Default()) // All origins allowed by default
 
+	// 2. AUTHENTICATION (Public)
 	auth := r.Group("/auth")
 	{
-		auth.POST("/sing-in", controller.SingIn)
-		auth.POST("/sign-up", controller.SignUp)
-		auth.GET("/check", middleware.JwtValidate, controller.CheckAuth)
-
+		auth.POST("/login", controller.SingIn)
+		auth.POST("/register", controller.SignUp)
 	}
 
-	product := r.Group("/product")
+	// 3. ERP MODULES (Requires JWT & Tenant Context)
+	// Every route here will require 'X-Tenant-ID' in the header
+	api := r.Group("/api/v1")
+	api.Use(middleware.JwtValidate)
+	api.Use(TenantContextMiddleware())
 	{
-		product.GET("/")
-		product.POST("/")
-		product.PATCH("/")
-		product.PUT("/")
-		product.DELETE("/:id")
-	}
-	category := r.Group("/category")
-	{
-		category.GET("/")
-		category.POST("/")
-		category.PATCH("/")
-		category.PUT("/")
-		category.DELETE("/:id")
+		// INVENTORY MODULE
+		inventory := api.Group("/inventory")
+		{
+			inventory.GET("/products", controller.GetProducts)
+			inventory.POST("/products", controller.CreateProduct)
+			inventory.GET("/categories", controller.GetCategories)
+			inventory.GET("/stock", controller.GetStockLevels)
+			inventory.POST("/draw", controller.ProcessStockDraw) // The 'Draw' logic
+		}
+
+		// HUMAN RESOURCES MODULE
+		hr := api.Group("/hr")
+		{
+			hr.GET("/employees", controller.GetAllEmployees)
+			hr.POST("/employees", controller.CreateEmployee)
+			hr.GET("/contracts", controller.GetEmployeeContracts)
+			hr.POST("/contracts", controller.SignNewContract)
+		}
+
+		// ADMINISTRATION / CORE
+		admin := api.Group("/admin")
+		{
+			admin.GET("/company", controller.GetCompanyProfile)
+			admin.GET("/roles", controller.GetAllRole)
+			admin.POST("/roles", controller.AddRole)
+			admin.GET("/tracker", controller.GetAuditLogs) // The 'Tracker' logic
+		}
 	}
 
-	company := r.Group("/company")
-	{
-		company.GET("/")
-		company.POST("/")
-		company.PATCH("/")
-		company.PUT("/")
-		company.DELETE("/:id")
-	}
-	role := r.Group("/role")
-	{
-		role.GET("/", controller.GetAllRole)
-		role.POST("/", controller.AddRole)
-		role.PATCH("/:id", controller.UpdateRole)
-		role.DELETE("/:id", controller.DeleteRole)
-	}
+	// 4. DATABASE SYNC
+	// Trigger AutoMigrate for: Company, User, Role, Product, Category,
+	// Stock, Warehouse, Employee, Contract, Tracker
+	r.GET("/sync", middleware.JwtValidate, middleware.IsSuperAdmin(), migrations.SchemaMigrations)
 
-	draw := r.Group("/draw")
-	{
-		draw.GET("/")
-		draw.POST("/")
-		draw.PATCH("/")
-		draw.PUT("/")
-		draw.DELETE("/:id")
+	r.Run(":8080")
+}
+
+// TenantContextMiddleware validates that the request is scoped to a specific instance
+func TenantContextMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := c.GetHeader("X-Tenant-ID")
+		if tenantID == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Multi-tenancy error: X-Tenant-ID header is missing",
+			})
+			return
+		}
+		// Inject into Gin context for controllers to use in GORM queries
+		c.Set("tenantID", tenantID)
+		c.Next()
 	}
-
-	r.GET("/sync", migrations.SchemaMigrations)
-
-	r.Run() // listen and serve on
 }
