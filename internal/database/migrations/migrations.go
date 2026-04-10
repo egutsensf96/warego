@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
@@ -10,7 +11,13 @@ import (
 
 // SchemaMigrations handles the GORM AutoMigrate process
 func SchemaMigrations(c *gin.Context) {
-	// 1. Initialize DB connection
+	// Optional: Check for a secret 'Migration-Key' header as a final fail-safe
+	masterKey := c.GetHeader("X-Migration-Key")
+	if masterKey != os.Getenv("MIGRATION_SECRET") {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Migration Key"})
+		return
+	}
+
 	db, err := database.IntialDB()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
