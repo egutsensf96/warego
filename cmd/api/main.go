@@ -3,9 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/egutsenf96/warego/internal/controller"
 	"github.com/egutsenf96/warego/internal/database/migrations"
+	"github.com/egutsenf96/warego/internal/database/seeders"
 	"github.com/egutsenf96/warego/internal/middleware"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
@@ -78,6 +80,9 @@ func main() {
 	// Trigger AutoMigrate for: Company, User, Role, Product, Category,
 	// Stock, Warehouse, Employee, Contract, Tracker
 	r.GET("/sync", middleware.JwtValidate, middleware.IsSuperAdmin(), migrations.SchemaMigrations)
+	if os.Getenv("SEED_DB") == "true" {
+		seeders.SeedAll()
+	}
 
 	r.Run(":8080")
 }
