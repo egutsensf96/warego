@@ -6,112 +6,86 @@ import (
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-func AddCategory(c *gin.Context) {
-	// 1. Get TenantID from context (Middleware should set this as int)
-	tenantID, exists := c.Get("tenantID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
+// GetCategories retrieves all categories for the authenticated tenant
+func GetCategories(c *gin.Context) {
+	db := database.GetDB()
+	tenantID := c.MustGet("tenantID").(string)
+
+	var categories []models.Category
+	if err := db.Where("tenant_id = ?", tenantID).Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve categories"})
 		return
 	}
 
-	var body struct {
-		Name     string `json:"name" binding:"required"`
-		ParentID *int   `json:"parent_id"` // Optional for hierarchical categories
-	}
+	c.JSON(http.StatusOK, categories)
+}
 
-	if err := c.ShouldBindJSON(&body); err != nil {
+// AddCategory creates a new product category
+func AddCategory(c *gin.Context) {
+	var category models.Category
+	if err := c.ShouldBindJSON(&category); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	db, _ := database.IntialDB()
+	// Lock the category to the current tenant
+	tenantIDStr := c.MustGet("tenantID").(string)
+	category.TenantID = uuid.MustParse(tenantIDStr)
 
-	category := models.Category{
-		TenantID: tenantID.(int),
-		Name:     body.Name,
-		ParentID: body.ParentID,
-	}
-
-	if result := db.Create(&category); result.Error != nil {
+	db := database.GetDB()
+	if err := db.Create(&category).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create category"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"data": category})
+	c.JSON(http.StatusCreated, category)
 }
 
-func GetCategories(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
-	db, _ := database.IntialDB()
-
-	var categories []models.Category
-
-	// Scoped to Tenant and preloading SubCategories if you implemented the slice in the model
-	if err := db.Where("tenant_id = ?", tenantID).Find(&categories).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching categories"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"result": categories})
-}
-
+// UpdateCategory updates a specific category name or details
 func UpdateCategory(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
 	id := c.Param("id")
+	tenantID := c.MustGet("tenantID").(string)
+	db := database.GetDB()
 
-	var body struct {
-		Name     string `json:"name" binding:"required"`
-		ParentID *int   `json:"parent_id"`
-	}
-
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Name is required"})
-		return
-	}
-
-	db, _ := database.IntialDB()
-
-	// Update logic using the struct to handle the tenant scoping
-	result := db.Model(&models.Category{}).
-		Where("id = ? AND tenant_id = ?", id, tenantID).
-		Updates(models.Category{
-			Name:     body.Name,
-			ParentID: body.ParentID,
-		})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Update failed"})
-		return
-	}
-
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found in this instance"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"msg": "Category updated successfully"})
-}
-
-func DeleteCategory(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
-	id := c.Param("id")
-
-	db, _ := database.IntialDB()
-
-	// Scoped delete to ensure a user can't delete another tenant's category by guessing the ID
-	result := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&models.Category{})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete failed"})
-		return
-	}
-
-	if result.RowsAffected == 0 {
+	var category models.Category
+	// Verify ownership before updating
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&category).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"msg": "Category deleted successfully"})
+	if err := c.ShouldBindJSON(&category); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	db.Save(&category)
+	c.JSON(http.StatusOK, category)
+}
+
+// DeleteCategory removes a category (Soft Delete)
+func DeleteCategory(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := c.MustGet("tenantID").(string)
+	db := database.GetDB()
+
+	// Check if any products are still using this category before deleting (optional but recommended)
+	var productCount int64
+	db.Model(&models.Product{}).Where("category_id = ? AND tenant_id = ?", id, tenantID).Count(&productCount)
+	if productCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete category while it still contains products"})
+		return
+	}
+
+	result := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&models.Category{})
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found or unauthorized"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Category deleted successfully"})
 }

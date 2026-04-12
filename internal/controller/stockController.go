@@ -2,70 +2,133 @@ package controller
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/egutsenf96/warego/internal/database"
+	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
-// GetStockLevels retrieves current stock quantities across all internal locations for the tenant
+// GetStockLevels returns the current quantity of all products across warehouses
 func GetStockLevels(c *gin.Context) {
-	// 1. Get TenantID from context (Ensure it's an int from middleware)
-	tenantID, exists := c.Get("tenantID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
+	db := database.GetDB()
+	tenantID := c.MustGet("tenantID").(string)
+
+	var stock []models.Tracker
+	// We use Preload to get Product and Warehouse details in the same response
+	if err := db.Preload("Product").Preload("Warehouse").Where("tenant_id = ?", tenantID).Find(&stock).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch stock levels"})
 		return
 	}
 
-	db, err := database.IntialDB()
+	c.JSON(http.StatusOK, stock)
+}
+
+// ProcessStockDraw handles the creation of a Draw and reduces the Tracker quantity
+func ProcessStockDraw(c *gin.Context) {
+	var req struct {
+		Name        string    `json:"name" binding:"required"`
+		ProductID   uuid.UUID `json:"product_id" binding:"required"`
+		WarehouseID uuid.UUID `json:"warehouse_id" binding:"required"`
+		WinnerID    uuid.UUID `json:"winner_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tenantIDStr := c.MustGet("tenantID").(string)
+	tenantID := uuid.MustParse(tenantIDStr)
+	db := database.GetDB()
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		// 1. Check and Reduce Stock
+		var tracker models.Tracker
+		if err := tx.Where("product_id = ? AND warehouse_id = ? AND tenant_id = ?", req.ProductID, req.WarehouseID, tenantID).First(&tracker).Error; err != nil {
+			return gorm.ErrRecordNotFound
+		}
+
+		if tracker.Quantity <= 0 {
+			return gorm.ErrInvalidData // Or custom "Out of Stock" error
+		}
+
+		tracker.Quantity--
+		if err := tx.Save(&tracker).Error; err != nil {
+			return err
+		}
+
+		// 2. Create Draw Record
+		draw := models.Draw{
+			Name:      req.Name,
+			ProductID: req.ProductID,
+			WinnerID:  &req.WinnerID,
+			TenantID:  tenantID,
+			Status:    "pending",
+		}
+
+		return tx.Create(&draw).Error
+	})
+
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed: " + err.Error()})
 		return
 	}
 
-	// In the Odoo-style model, we calculate stock based on locations.
-	// This struct helps format the response for the frontend.
-	type StockReport struct {
-		ProductID   int     `json:"product_id"`
-		ProductName string  `json:"product_name"`
-		SKU         string  `json:"sku"`
-		Location    string  `json:"location_name"`
-		Warehouse   string  `json:"warehouse_name"`
-		Quantity    float64 `json:"quantity"`
-	}
+	c.JSON(http.StatusCreated, gin.H{"message": "Stock moved and draw created successfully"})
+}
 
-	var report []StockReport
+// GetDraws retrieves history of all draws for the tenant
+func GetDraws(c *gin.Context) {
+	db := database.GetDB()
+	tenantID := c.MustGet("tenantID").(string)
 
-	// 2. Aggregate Query
-	// We calculate: SUM(qty at destination) - SUM(qty at source)
-	// filtered by tenant and grouped by location/variant.
-	query := `
-		SELECT 
-			pv.id as product_id, 
-			pt.name as product_name, 
-			pv.sku, 
-			l.name as location_name, 
-			w.name as warehouse_name,
-			SUM(CASE WHEN sm.dest_location_id = l.id THEN sm.qty ELSE -sm.qty END) as quantity
-		FROM stock_moves sm
-		JOIN product_variants pv ON sm.variant_id = pv.id
-		JOIN product_templates pt ON pv.template_id = pt.id
-		JOIN locations l ON (sm.dest_location_id = l.id OR sm.src_location_id = l.id)
-		JOIN warehouses w ON l.warehouse_id = w.id
-		WHERE sm.tenant_id = ? AND l.location_type = 'internal'
-		GROUP BY pv.id, pt.name, pv.sku, l.id, w.name
-		HAVING SUM(CASE WHEN sm.dest_location_id = l.id THEN sm.qty ELSE -sm.qty END) > 0
-	`
-
-	result := db.Raw(query, tenantID).Scan(&report)
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate stock levels"})
+	var draws []models.Draw
+	if err := db.Preload("Product").Where("tenant_id = ?", tenantID).Find(&draws).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch draws"})
 		return
 	}
 
-	// 3. Response
+	c.JSON(http.StatusOK, draws)
+}
+
+// RetireProduct marks a draw as physically collected
+func RetireProduct(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := c.MustGet("tenantID").(string)
+
+	// In a real app, this would come from the JWT claims (the admin logged in)
+	adminIDStr, _ := c.Get("userID")
+
+	db := database.GetDB()
+	var draw models.Draw
+
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&draw).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Draw not found"})
+		return
+	}
+
+	if draw.Status == "retrieved" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product already retired"})
+		return
+	}
+
+	now := time.Now()
+	draw.RetrievedAt = &now
+	draw.Status = "retrieved"
+
+	// If adminID is available in context, set it
+	if adminIDStr != nil {
+		uid := uuid.MustParse(adminIDStr.(string))
+		draw.RetrievedByID = &uid
+	}
+
+	db.Save(&draw)
+
 	c.JSON(http.StatusOK, gin.H{
-		"count":  len(report),
-		"result": report,
+		"message":      "Product retired successfully",
+		"retrieved_at": draw.RetrievedAt,
 	})
 }

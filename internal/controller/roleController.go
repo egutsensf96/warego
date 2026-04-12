@@ -8,106 +8,75 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func AddRole(c *gin.Context) {
-	// 1. Get TenantID from Context (Ensuring it's an integer)
-	tenantID, exists := c.Get("tenantID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
-		return
-	}
-
-	var body struct {
-		Name string `json:"name" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Role name is required"})
-		return
-	}
-
-	db, _ := database.IntialDB()
-
-	role := models.Role{
-		TenantID: tenantID.(int),
-		Name:     body.Name,
-	}
-
-	if result := db.Create(&role); result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create role"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"data": role})
-}
-
+// GetAllRole retrieves all roles available for the tenant's users
 func GetAllRole(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
-	db, _ := database.IntialDB()
-
+	db := database.GetDB()
 	var roles []models.Role
 
-	// Scoped search
-	result := db.Where("tenant_id = ?", tenantID).Find(&roles)
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching roles"})
+	// Depending on your design, roles might be global or per-tenant.
+	// This query assumes roles are global or assigned to the tenant's users.
+	if err := db.Find(&roles).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch roles"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"result": roles})
+	c.JSON(http.StatusOK, roles)
 }
 
+// AddRole creates a new role in the system
+func AddRole(c *gin.Context) {
+	var role models.Role
+	if err := c.ShouldBindJSON(&role); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	db := database.GetDB()
+	if err := db.Create(&role).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create role"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, role)
+}
+
+// UpdateRole modifies role descriptions or names
 func UpdateRole(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
-	roleID := c.Param("id")
+	id := c.Param("id")
+	db := database.GetDB()
+	var role models.Role
 
-	var body struct {
-		Name string `json:"name" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Name is required"})
-		return
-	}
-
-	db, _ := database.IntialDB()
-
-	// Update strictly scoped by TenantID
-	result := db.Model(&models.Role{}).
-		Where("id = ? AND tenant_id = ?", roleID, tenantID).
-		Update("name", body.Name)
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Update failed"})
-		return
-	}
-
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Role not found or unauthorized"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"msg": "Update successful"})
-}
-
-func DeleteRole(c *gin.Context) {
-	tenantID, _ := c.Get("tenantID")
-	roleID := c.Param("id")
-
-	db, _ := database.IntialDB()
-
-	// Guard against deleting roles from other tenants
-	result := db.Where("id = ? AND tenant_id = ?", roleID, tenantID).Delete(&models.Role{})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete failed"})
-		return
-	}
-
-	if result.RowsAffected == 0 {
+	if err := db.First(&role, "id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Role not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"msg": "Role deleted successfully"})
+	if err := c.ShouldBindJSON(&role); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	db.Save(&role)
+	c.JSON(http.StatusOK, role)
+}
+
+// DeleteRole removes a role from the system
+func DeleteRole(c *gin.Context) {
+	id := c.Param("id")
+	db := database.GetDB()
+
+	// Safety check: Don't delete a role if users are still assigned to it
+	var userCount int64
+	db.Model(&models.User{}).Where("role_id = ?", id).Count(&userCount)
+	if userCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete role because users are currently assigned to it"})
+		return
+	}
+
+	if err := db.Delete(&models.Role{}, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete role"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Role deleted successfully"})
 }

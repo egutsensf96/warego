@@ -2,112 +2,89 @@ package models
 
 import (
 	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
-// Tenant defines the top-level Organization (Multi-tenant)
-type Tenant struct {
-	ID        int       `json:"id"`
-	Name      string    `json:"name"`
-	TaxID     string    `json:"tax_id"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// Category allows for product grouping
-type Category struct {
-	ID            int        `json:"id"`
-	TenantID      int        `json:"tenant_id"`
-	Name          string     `json:"name"`
-	ParentID      *int       `json:"parent_id"` // Pointer for nullable parent
-	SubCategories []Category `json:"sub_categories,omitempty"`
-}
-
+// Base model to include common fields
 type Base struct {
-	ID        int       `gorm:"primaryKey" json:"id"`
-	TenantID  int       `gorm:"index" json:"tenant_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-type User struct {
-	Base                // This embeds ID and TenantID
-	Username     string `gorm:"unique" json:"username"`
-	Email        string `gorm:"unique" json:"email"`
-	PasswordHash string `json:"-"` // This is the field the controller is looking for
-	RoleID       int    `json:"role_id"`
-	Role         Role   `json:"role" gorm:"foreignKey:RoleID"`
-	ImageBase64  string `json:"image_base64"`
-	IsActive     bool   `json:"is_active" gorm:"default:true"`
+type Tenant struct {
+	Base
+	Name   string `gorm:"unique;not null" json:"name"`
+	Domain string `gorm:"unique" json:"domain"`
 }
 
 type Role struct {
-	ID       int    `gorm:"primaryKey" json:"id"`
-	TenantID int    `json:"tenant_id"`
-	Name     string `json:"name"`
+	Base
+	Name        string `gorm:"not null" json:"name"`
+	Description string `json:"description"`
 }
 
-// ProductTemplate (The "Base" Product)
-type ProductTemplate struct {
-	ID          int              `json:"id"`
-	TenantID    int              `json:"tenant_id"`
-	CategoryID  int              `json:"category_id"`
-	Category    Category         `json:"category"` // Belongs To
-	Name        string           `json:"name"`
-	Type        string           `json:"type"`
-	ImageBase64 string           `json:"image_base64"`
-	Variants    []ProductVariant `json:"variants"` // Has Many
+type User struct {
+	Base
+	Email       string    `gorm:"unique;not null" json:"email"`
+	Password    string    `gorm:"not null" json:"-"`
+	ImageBase64 string    `gorm:"type:text" json:"image_base64"`
+	TenantID    uuid.UUID `gorm:"type:uuid" json:"tenant_id"`
+	RoleID      uuid.UUID `gorm:"type:uuid" json:"role_id"`
+	Tenant      Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
+	Role        Role      `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 }
 
-// ProductVariant (The specific item, e.g., T-Shirt Blue Small)
-type ProductVariant struct {
-	ID              int            `json:"id"`
-	TemplateID      int            `json:"template_id"`
-	TenantID        int            `json:"tenant_id"`
-	SKU             string         `json:"sku"`
-	AttributeValues map[string]any `json:"attribute_values"` // JSONB mapping
-	CostPrice       float64        `json:"cost_price"`
-	ListPrice       float64        `json:"list_price"`
-	Active          bool           `json:"active"`
+type Category struct {
+	Base
+	Name     string    `gorm:"not null" json:"name"`
+	TenantID uuid.UUID `gorm:"type:uuid" json:"tenant_id"`
+	Tenant   Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
 }
 
-// Multi-Warehouse / Location Relationship
+type Product struct {
+	Base
+	Name        string    `gorm:"not null" json:"name"`
+	SKU         string    `gorm:"unique;not null" json:"sku"`
+	ImageBase64 string    `gorm:"type:text" json:"image_base64"`
+	CategoryID  uuid.UUID `gorm:"type:uuid" json:"category_id"`
+	TenantID    uuid.UUID `gorm:"type:uuid" json:"tenant_id"`
+	Category    Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	Tenant      Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
+}
+
 type Warehouse struct {
-	ID        int        `json:"id"`
-	TenantID  int        `json:"tenant_id"`
-	Name      string     `json:"name"`
-	Code      string     `json:"code"`
-	Locations []Location `json:"locations"` // Has Many
+	Base
+	Name     string    `gorm:"not null" json:"name"`
+	Location string    `json:"location"`
+	TenantID uuid.UUID `gorm:"type:uuid" json:"tenant_id"`
+	Tenant   Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
 }
 
-type Location struct {
-	ID           int    `json:"id"`
-	WarehouseID  int    `json:"warehouse_id"`
-	TenantID     int    `json:"tenant_id"`
-	Name         string `json:"name"`
-	LocationType string `json:"location_type"`
-}
-
-// StockMove tracks movement between locations
-type StockMove struct {
-	ID             int            `json:"id"`
-	TenantID       int            `json:"tenant_id"`
-	VariantID      int            `json:"variant_id"`
-	Variant        ProductVariant `json:"variant"` // Belongs To
-	SrcLocationID  int            `json:"src_location_id"`
-	DestLocationID int            `json:"dest_location_id"`
-	UserID         int            `json:"user_id"`
-	User           User           `json:"user"` // Belongs To
-	Qty            float64        `json:"qty"`
-	Reference      string         `json:"reference"`
-	CreatedAt      time.Time      `json:"created_at"`
-}
 type Tracker struct {
-	Base             // Embeds ID, TenantID, CreatedAt
-	UserID    int    `json:"user_id" gorm:"index"`          // The person who performed the action
-	User      User   `json:"user" gorm:"foreignKey:UserID"` // Belongs To relationship
-	Event     string `json:"event"`                         // e.g., "PRODUCT_CREATED", "STOCK_DRAWAL"
-	Resource  string `json:"resource"`                      // e.g., "product_variants", "stock_moves"
-	TargetID  int    `json:"target_id"`                     // The ID of the record that was changed
-	OldValue  string `json:"old_value" gorm:"type:text"`    // For tracking changes
-	NewValue  string `json:"new_value" gorm:"type:text"`    // For tracking changes
-	IPAddress string `json:"ip_address"`                    // Useful for security audits
+	Base
+	ProductID   uuid.UUID `gorm:"type:uuid" json:"product_id"`
+	WarehouseID uuid.UUID `gorm:"type:uuid" json:"warehouse_id"`
+	Quantity    int       `json:"quantity"`
+	TenantID    uuid.UUID `gorm:"type:uuid" json:"tenant_id"`
+	Product     Product   `gorm:"foreignKey:ProductID" json:"product,omitempty"`
+	Warehouse   Warehouse `gorm:"foreignKey:WarehouseID" json:"warehouse,omitempty"`
+}
+
+type Draw struct {
+	Base
+	Name          string     `json:"name"`
+	ProductID     uuid.UUID  `gorm:"type:uuid" json:"product_id"`
+	WinnerID      *uuid.UUID `gorm:"type:uuid" json:"winner_id"`
+	TenantID      uuid.UUID  `gorm:"type:uuid" json:"tenant_id"`
+	RetrievedByID *uuid.UUID `gorm:"type:uuid" json:"retrieved_by_id"`
+	RetrievedAt   *time.Time `json:"retrieved_at"`
+	Status        string     `gorm:"default:'pending'" json:"status"`
+	Product       Product    `gorm:"foreignKey:ProductID" json:"product,omitempty"`
+	Winner        User       `gorm:"foreignKey:WinnerID" json:"winner,omitempty"`
+	RetrievedBy   User       `gorm:"foreignKey:RetrievedByID" json:"retrieved_by,omitempty"`
+	Tenant        Tenant     `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
 }

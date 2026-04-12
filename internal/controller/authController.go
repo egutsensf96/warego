@@ -9,17 +9,17 @@ import (
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func SignUp(c *gin.Context) {
 	var body struct {
-		Username    string `json:"username" binding:"required"`
-		Email       string `json:"email" binding:"required,email"`
-		Password    string `json:"password" binding:"required,min=8"`
-		TenantID    int    `json:"tenant_id" binding:"required"`
-		RoleID      int    `json:"role_id" binding:"required"`
-		ImageBase64 string `json:"image_base64"` // Added per requirements
+		Email       string    `json:"email" binding:"required,email"`
+		Password    string    `json:"password" binding:"required,min=8"`
+		TenantID    uuid.UUID `json:"tenant_id" binding:"required"`
+		RoleID      uuid.UUID `json:"role_id" binding:"required"`
+		ImageBase64 string    `json:"image_base64"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -34,18 +34,14 @@ func SignUp(c *gin.Context) {
 		return
 	}
 
-	// Use a singleton DB instance if possible
-	db, _ := database.IntialDB()
+	db := database.GetDB()
 
 	user := models.User{
-		Base: models.Base{
-			TenantID: body.TenantID, // Field lives inside Base
-		},
-		Username:     body.Username,
-		Email:        body.Email,
-		PasswordHash: string(hash), // Make sure this matches the model field name
-		RoleID:       body.RoleID,
-		ImageBase64:  body.ImageBase64,
+		Email:       body.Email,
+		Password:    string(hash),
+		TenantID:    body.TenantID,
+		RoleID:      body.RoleID,
+		ImageBase64: body.ImageBase64,
 	}
 
 	if result := db.Create(&user); result.Error != nil {
@@ -70,7 +66,7 @@ func SingIn(c *gin.Context) {
 		return
 	}
 
-	db, _ := database.IntialDB()
+	db := database.GetDB()
 	var user models.User
 
 	// 1. Find user by email
@@ -79,17 +75,18 @@ func SingIn(c *gin.Context) {
 		return
 	}
 
-	// 2. Compare password with hash (using PasswordHash from model)
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
+	// 2. Compare password with hash
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}
 
 	// 3. Generate JWT with Tenant Context
+	// We convert UUIDs to strings for the JWT claims
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":       user.ID,
-		"tenant_id": user.TenantID, // Critical for multi-tenancy middleware
-		"role_id":   user.RoleID,
+		"sub":       user.ID.String(),
+		"tenant_id": user.TenantID.String(), // Critical for multi-tenancy middleware
+		"role_id":   user.RoleID.String(),
 		"exp":       time.Now().Add(time.Hour * 24 * 7).Unix(),
 	})
 
@@ -107,7 +104,7 @@ func SingIn(c *gin.Context) {
 		"token":     tokenString,
 		"tenant_id": user.TenantID,
 		"user": gin.H{
-			"username":     user.Username,
+			"email":        user.Email,
 			"image_base64": user.ImageBase64,
 		},
 	})
