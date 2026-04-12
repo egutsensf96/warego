@@ -11,10 +11,10 @@ import (
 
 // SchemaMigrations handles the GORM AutoMigrate process
 func SchemaMigrations(c *gin.Context) {
-	// Optional: Check for a secret 'Migration-Key' header as a final fail-safe
+	// 1. Security Check
 	masterKey := c.GetHeader("X-Migration-Key")
-	if masterKey != os.Getenv("MIGRATION_SECRET") {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Migration Key"})
+	if masterKey == "" || masterKey != os.Getenv("MIGRATION_SECRET") {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing Migration Key"})
 		return
 	}
 
@@ -24,27 +24,29 @@ func SchemaMigrations(c *gin.Context) {
 		return
 	}
 
-	// 2. Run AutoMigrate
-	// Order: Independent tables (Company/Role) -> Dependent tables (User/Employee) -> Transactional tables
+	// 2. Run AutoMigrate in Logical Order
+	// We migrate 'Tenants' and 'Roles' first so 'Users' can reference them.
 	err = db.AutoMigrate(
-		// Core Module
-		&models.Company{},
+		// Core Infrastructure
+		&models.Tenant{},
 		&models.Role{},
 		&models.User{},
 
-		// Inventory Module
+		// Inventory Foundation (Odoo Structure)
 		&models.Category{},
 		&models.Warehouse{},
-		&models.Product{},
-		&models.Stock{},
-		&models.Draw{}, // The withdrawal records
+		&models.Location{}, // New: Supports internal vs virtual locations
 
-		// HR Module
-		&models.Employee{},
-		&models.Contract{},
+		// Product Management
+		&models.ProductTemplate{}, // General info + Image
+		&models.ProductVariant{},  // SKU + Specific pricing
 
-		// Audit Module
-		&models.Tracker{},
+		// Transactional Data
+		&models.StockMove{}, // Replaces 'Draw' and 'Stock' for audit-safe inventory
+
+		// HR & Administration
+
+		&models.Tracker{}, // System-wide audit logs
 	)
 
 	if err != nil {
@@ -56,6 +58,6 @@ func SchemaMigrations(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Database schema synchronized successfully",
+		"message": "Database schema synchronized successfully with Double-Entry support",
 	})
 }

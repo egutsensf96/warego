@@ -6,35 +6,30 @@ import (
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 func AddRole(c *gin.Context) {
-	// 1. Get TenantID from Context (Set by Middleware)
-	tenantIDStr := c.GetString("tenantID")
-	tenantID, err := uuid.Parse(tenantIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Tenant ID"})
+	// 1. Get TenantID from Context (Ensuring it's an integer)
+	tenantID, exists := c.Get("tenantID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
 		return
 	}
 
 	var body struct {
-		Description string `json:"description" binding:"required"`
+		Name string `json:"name" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Description is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Role name is required"})
 		return
 	}
 
-	// 2. Initialize DB
 	db, _ := database.IntialDB()
 
 	role := models.Role{
-		Base: models.Base{
-			TenantID: tenantID,
-		},
-		Description: body.Description,
+		TenantID: tenantID.(int),
+		Name:     body.Name,
 	}
 
 	if result := db.Create(&role); result.Error != nil {
@@ -46,12 +41,12 @@ func AddRole(c *gin.Context) {
 }
 
 func GetAllRole(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
+	tenantID, _ := c.Get("tenantID")
 	db, _ := database.IntialDB()
 
 	var roles []models.Role
 
-	// CRITICAL: Always filter by TenantID
+	// Scoped search
 	result := db.Where("tenant_id = ?", tenantID).Find(&roles)
 
 	if result.Error != nil {
@@ -63,24 +58,24 @@ func GetAllRole(c *gin.Context) {
 }
 
 func UpdateRole(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
+	tenantID, _ := c.Get("tenantID")
 	roleID := c.Param("id")
 
 	var body struct {
-		Description string `json:"description" binding:"required"`
+		Name string `json:"name" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Description is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Name is required"})
 		return
 	}
 
 	db, _ := database.IntialDB()
 
-	// Ensure the role belongs to the tenant before updating
+	// Update strictly scoped by TenantID
 	result := db.Model(&models.Role{}).
 		Where("id = ? AND tenant_id = ?", roleID, tenantID).
-		Update("description", body.Description)
+		Update("name", body.Name)
 
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Update failed"})
@@ -88,7 +83,7 @@ func UpdateRole(c *gin.Context) {
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Role not found in this instance"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Role not found or unauthorized"})
 		return
 	}
 
@@ -96,16 +91,21 @@ func UpdateRole(c *gin.Context) {
 }
 
 func DeleteRole(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
+	tenantID, _ := c.Get("tenantID")
 	roleID := c.Param("id")
 
 	db, _ := database.IntialDB()
 
-	// Soft delete (GORM handles this via DeletedAt in Base struct)
+	// Guard against deleting roles from other tenants
 	result := db.Where("id = ? AND tenant_id = ?", roleID, tenantID).Delete(&models.Role{})
 
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete failed"})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Role not found"})
 		return
 	}
 

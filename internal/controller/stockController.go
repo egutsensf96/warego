@@ -4,14 +4,17 @@ import (
 	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
-	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
 )
 
-// GetStockLevels retrieves current stock quantities across all warehouses for the tenant
+// GetStockLevels retrieves current stock quantities across all internal locations for the tenant
 func GetStockLevels(c *gin.Context) {
-	// 1. Get TenantID from context (Middleware)
-	tenantID := c.GetString("tenantID")
+	// 1. Get TenantID from context (Ensure it's an int from middleware)
+	tenantID, exists := c.Get("tenantID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
+		return
+	}
 
 	db, err := database.IntialDB()
 	if err != nil {
@@ -19,31 +22,50 @@ func GetStockLevels(c *gin.Context) {
 		return
 	}
 
-	var stocks []models.Stock
+	// In the Odoo-style model, we calculate stock based on locations.
+	// This struct helps format the response for the frontend.
+	type StockReport struct {
+		ProductID   int     `json:"product_id"`
+		ProductName string  `json:"product_name"`
+		SKU         string  `json:"sku"`
+		Location    string  `json:"location_name"`
+		Warehouse   string  `json:"warehouse_name"`
+		Quantity    float64 `json:"quantity"`
+	}
 
-	// 2. Query with Preloads
-	// We join Product and Warehouse data so the frontend shows names, not just UUIDs
-	result := db.Preload("Product").
-		Preload("Warehouse").
-		Where("tenant_id = ?", tenantID).
-		Find(&stocks)
+	var report []StockReport
+
+	// 2. Aggregate Query
+	// We calculate: SUM(qty at destination) - SUM(qty at source)
+	// filtered by tenant and grouped by location/variant.
+	query := `
+		SELECT 
+			pv.id as product_id, 
+			pt.name as product_name, 
+			pv.sku, 
+			l.name as location_name, 
+			w.name as warehouse_name,
+			SUM(CASE WHEN sm.dest_location_id = l.id THEN sm.qty ELSE -sm.qty END) as quantity
+		FROM stock_moves sm
+		JOIN product_variants pv ON sm.variant_id = pv.id
+		JOIN product_templates pt ON pv.template_id = pt.id
+		JOIN locations l ON (sm.dest_location_id = l.id OR sm.src_location_id = l.id)
+		JOIN warehouses w ON l.warehouse_id = w.id
+		WHERE sm.tenant_id = ? AND l.location_type = 'internal'
+		GROUP BY pv.id, pt.name, pv.sku, l.id, w.name
+		HAVING SUM(CASE WHEN sm.dest_location_id = l.id THEN sm.qty ELSE -sm.qty END) > 0
+	`
+
+	result := db.Raw(query, tenantID).Scan(&report)
 
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stock levels"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate stock levels"})
 		return
 	}
 
-	// 3. Logic check: If no stock records exist yet
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "No stock records found for this instance",
-			"result":  []models.Stock{},
-		})
-		return
-	}
-
+	// 3. Response
 	c.JSON(http.StatusOK, gin.H{
-		"count":  result.RowsAffected,
-		"result": stocks,
+		"count":  len(report),
+		"result": report,
 	})
 }

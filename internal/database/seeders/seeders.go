@@ -5,85 +5,99 @@ import (
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func SeedAll() {
-	db, err := database.IntialDB()
+	db, err := database.IntialDB() // Ensure this matches your package (InitialDB?)
 	if err != nil {
 		log.Fatal("Could not connect to DB for seeding")
 	}
 
-	// --- 1. SEED COMPANY (TENANT) ---
-	tenantID := uuid.New()
-	company := models.Company{
-		Base:  models.Base{ID: tenantID, TenantID: tenantID},
+	// 1. SEED TENANT
+	tenant := models.Tenant{
 		Name:  "TechCorp Solutions",
 		TaxID: "J-12345678-9",
 	}
-	db.FirstOrCreate(&company, models.Company{Name: "TechCorp Solutions"})
+	db.Where(models.Tenant{Name: "TechCorp Solutions"}).FirstOrCreate(&tenant)
 
-	// --- 2. SEED ROLES ---
+	// 2. SEED ROLES
 	superRole := models.Role{
-		Base:        models.Base{TenantID: tenantID},
-		Description: "Superadmin",
+		Name: "Superadmin",
 	}
-	userRole := models.Role{
-		Base:        models.Base{TenantID: tenantID},
-		Description: "Warehouse Operator",
-	}
-	db.FirstOrCreate(&superRole, models.Role{Description: "Superadmin", Base: models.Base{TenantID: tenantID}})
-	db.FirstOrCreate(&userRole, models.Role{Description: "Warehouse Operator", Base: models.Base{TenantID: tenantID}})
+	superRole.TenantID = tenant.ID // Setting after init to avoid struct literal issues
+	db.Where(models.Role{Name: "Superadmin", TenantID: tenant.ID}).FirstOrCreate(&superRole)
 
-	// --- 3. SEED MASTER USER ---
+	// 3. SEED MASTER USER
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("Warego2026!"), 12)
 	adminUser := models.User{
-		Base:      models.Base{TenantID: tenantID},
-		FirstName: "Admin",
-		LastName:  "User",
-		Email:     "admin@techcorp.com",
-		Password:  string(hashedPassword),
-		RoleID:    superRole.ID,
+		Username:     "admin",
+		Email:        "admin@techcorp.com",
+		PasswordHash: string(hashedPassword),
+		RoleID:       superRole.ID,
 	}
-	db.Where("email = ?", "admin@techcorp.com").FirstOrCreate(&adminUser)
+	adminUser.TenantID = tenant.ID
+	db.Where(models.User{Email: "admin@techcorp.com"}).FirstOrCreate(&adminUser)
 
-	// --- 4. SEED INVENTORY CATEGORIES ---
-	catHardware := models.Category{
-		Base:        models.Base{TenantID: tenantID},
-		Description: "Server Hardware",
-	}
-	db.FirstOrCreate(&catHardware, models.Category{Description: "Server Hardware", Base: models.Base{TenantID: tenantID}})
-
-	// --- 5. SEED WAREHOUSE ---
+	// 4. SEED WAREHOUSE (Required for locations below)
 	warehouse := models.Warehouse{
-		Base:     models.Base{TenantID: tenantID},
-		Name:     "Main DC Warehouse",
-		Location: "Building A - Sector 4",
+		Name: "Main DC Warehouse",
 	}
-	db.FirstOrCreate(&warehouse, models.Warehouse{Name: "Main DC Warehouse", Base: models.Base{TenantID: tenantID}})
+	warehouse.TenantID = tenant.ID
+	db.Where(models.Warehouse{Name: "Main DC Warehouse", TenantID: tenant.ID}).FirstOrCreate(&warehouse)
 
-	// --- 6. SEED PRODUCTS ---
-	product := models.Product{
-		Base:        models.Base{TenantID: tenantID},
-		SKU:         "HPE-DL20-G10",
-		Description: "HPE ProLiant DL20 Gen10 Server",
-		Cost:        1200.50,
-		CategoryID:  catHardware.ID,
-		UserID:      adminUser.ID,
+	// 5. SEED LOCATIONS
+	internalLoc := models.Location{
+		WarehouseID:  warehouse.ID,
+		Name:         "Shelf A1",
+		LocationType: "internal",
 	}
-	db.Where("sku = ?", "HPE-DL20-G10").FirstOrCreate(&product)
+	internalLoc.TenantID = tenant.ID
+	db.Where(models.Location{Name: "Shelf A1", WarehouseID: warehouse.ID}).FirstOrCreate(&internalLoc)
 
-	// --- 7. SEED INITIAL STOCK ---
-	stock := models.Stock{
-		Base:        models.Base{TenantID: tenantID},
-		ProductID:   product.ID,
-		WarehouseID: warehouse.ID,
-		Quantity:    25,
+	inventoryLoc := models.Location{
+		WarehouseID:  warehouse.ID,
+		Name:         "Initial Inventory Adjustment",
+		LocationType: "inventory",
 	}
-	db.Where("product_id = ? AND warehouse_id = ?", product.ID, warehouse.ID).FirstOrCreate(&stock)
+	inventoryLoc.TenantID = tenant.ID
+	db.Where(models.Location{Name: "Initial Inventory Adjustment"}).FirstOrCreate(&inventoryLoc)
+
+	// 6. SEED PRODUCT
+	template := models.ProductTemplate{
+		Name: "HPE ProLiant DL20 Gen10",
+		Type: "storable",
+	}
+	template.TenantID = tenant.ID
+	db.Where(models.ProductTemplate{Name: "HPE ProLiant DL20 Gen10", TenantID: tenant.ID}).FirstOrCreate(&template)
+
+	variant := models.ProductVariant{
+		TemplateID: template.ID,
+		SKU:        "HPE-DL20-G10",
+		CostPrice:  1200.50,
+		ListPrice:  1500.00,
+		Active:     true,
+	}
+	variant.TenantID = tenant.ID
+	db.Where(models.ProductVariant{SKU: "HPE-DL20-G10", TenantID: tenant.ID}).FirstOrCreate(&variant)
+
+	// 7. SEED INITIAL STOCK MOVE
+	var moveCount int64
+	// Use = here if moveCount was already declared, but since it's new, we use :=
+	db.Model(&models.StockMove{}).Where("reference = ? AND tenant_id = ?", "INIT-001", tenant.ID).Count(&moveCount)
+
+	if moveCount == 0 {
+		stockMove := models.StockMove{
+			VariantID:      variant.ID,
+			SrcLocationID:  inventoryLoc.ID,
+			DestLocationID: internalLoc.ID,
+			Qty:            50,
+			UserID:         adminUser.ID,
+			Reference:      "INIT-001",
+		}
+		stockMove.TenantID = tenant.ID
+		db.Create(&stockMove)
+	}
 
 	log.Println(">>> Seeding completed successfully!")
-	log.Printf(">>> Tenant ID: %s", tenantID)
-	log.Println(">>> Credentials: admin@techcorp.com / Warego2026!")
 }

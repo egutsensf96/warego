@@ -10,8 +10,12 @@ import (
 
 // GetAuditLogs retrieves the history of actions performed within the tenant's instance
 func GetAuditLogs(c *gin.Context) {
-	// 1. Get TenantID from the middleware context
-	tenantID := c.GetString("tenantID")
+	// 1. Get TenantID from the middleware context (Ensuring it's an int)
+	tenantID, exists := c.Get("tenantID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
+		return
+	}
 
 	db, err := database.IntialDB()
 	if err != nil {
@@ -21,12 +25,12 @@ func GetAuditLogs(c *gin.Context) {
 
 	var logs []models.Tracker
 
-	// 2. Query with Preload
-	// We preload "User" so the UI shows "John Doe" instead of just a UUID
+	// 2. Query with Preload and Scoping
+	// We cast tenantID to (int) to match the database column type
 	result := db.Preload("User").
-		Where("tenant_id = ?", tenantID).
-		Order("created_at desc"). // Show newest actions first
-		Limit(100).               // Limit to last 100 entries for performance
+		Where("tenant_id = ?", tenantID.(int)).
+		Order("created_at desc"). // Standard ERP practice: Newest first
+		Limit(200).               // Increased limit slightly for better visibility
 		Find(&logs)
 
 	if result.Error != nil {
@@ -35,7 +39,7 @@ func GetAuditLogs(c *gin.Context) {
 	}
 
 	// 3. Logic check for empty logs
-	if result.RowsAffected == 0 {
+	if len(logs) == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "No activity recorded yet",
 			"result":  []models.Tracker{},
@@ -44,7 +48,7 @@ func GetAuditLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"count":  result.RowsAffected,
+		"count":  len(logs),
 		"result": logs,
 	})
 }

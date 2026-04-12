@@ -9,18 +9,17 @@ import (
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func SignUp(c *gin.Context) {
 	var body struct {
-		Name     string    `json:"name" binding:"required"`
-		LastName string    `json:"last_name" binding:"required"`
-		Email    string    `json:"email" binding:"required,email"`
-		Password string    `json:"password" binding:"required,min=8"`
-		TenantID uuid.UUID `json:"tenant_id" binding:"required"` // Multi-tenant requirement
-		RoleID   uuid.UUID `json:"role_id"`
+		Username    string `json:"username" binding:"required"`
+		Email       string `json:"email" binding:"required,email"`
+		Password    string `json:"password" binding:"required,min=8"`
+		TenantID    int    `json:"tenant_id" binding:"required"`
+		RoleID      int    `json:"role_id" binding:"required"`
+		ImageBase64 string `json:"image_base64"` // Added per requirements
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -35,26 +34,29 @@ func SignUp(c *gin.Context) {
 		return
 	}
 
-	// Initialize DB (Ideally use a global instance instead of opening every time)
+	// Use a singleton DB instance if possible
 	db, _ := database.IntialDB()
 
 	user := models.User{
 		Base: models.Base{
-			TenantID: body.TenantID,
+			TenantID: body.TenantID, // Field lives inside Base
 		},
-		FirstName: body.Name,
-		LastName:  body.LastName,
-		Email:     body.Email,
-		Password:  string(hash),
-		RoleID:    body.RoleID,
+		Username:     body.Username,
+		Email:        body.Email,
+		PasswordHash: string(hash), // Make sure this matches the model field name
+		RoleID:       body.RoleID,
+		ImageBase64:  body.ImageBase64,
 	}
 
 	if result := db.Create(&user); result.Error != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "User already exists or invalid tenant"})
+		c.JSON(http.StatusConflict, gin.H{"error": "User already exists or invalid tenant/role"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": "User created successfully", "user_id": user.ID})
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "User created successfully",
+		"user_id": user.ID,
+	})
 }
 
 func SingIn(c *gin.Context) {
@@ -77,17 +79,17 @@ func SingIn(c *gin.Context) {
 		return
 	}
 
-	// 2. Compare password with hash
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password)); err != nil {
+	// 2. Compare password with hash (using PasswordHash from model)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}
 
-	// 3. Generate JWT
-	// We include TenantID in the token to persist context
+	// 3. Generate JWT with Tenant Context
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":       user.ID,
-		"tenant_id": user.TenantID,
+		"tenant_id": user.TenantID, // Critical for multi-tenancy middleware
+		"role_id":   user.RoleID,
 		"exp":       time.Now().Add(time.Hour * 24 * 7).Unix(),
 	})
 
@@ -103,12 +105,15 @@ func SingIn(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"token":     tokenString,
-		"tenant_id": user.TenantID, // Frontend will need this for X-Tenant-ID header
+		"tenant_id": user.TenantID,
+		"user": gin.H{
+			"username":     user.Username,
+			"image_base64": user.ImageBase64,
+		},
 	})
 }
 
 func CheckAuth(c *gin.Context) {
-	// Retrieving the user object set by your JwtValidate middleware
 	user, exists := c.Get("user")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})

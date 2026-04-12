@@ -1,28 +1,27 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 func ProcessStockDraw(c *gin.Context) {
-	// 1. Get Context from Middleware
-	tenantIDStr := c.GetString("tenantID")
-	tenantID, _ := uuid.Parse(tenantIDStr)
-
-	// Get the authenticated user ID
+	// 1. Get Context (Assumes Middleware sets these as int and models.User)
+	tenantID, _ := c.Get("tenantID")
 	val, _ := c.Get("user")
 	currentUser := val.(models.User)
 
 	var body struct {
-		ProductID   uuid.UUID `json:"product_id" binding:"required"`
-		WarehouseID uuid.UUID `json:"warehouse_id" binding:"required"`
-		Quantity    float64   `json:"quantity" binding:"required,gt=0"`
+		VariantID   int     `json:"variant_id" binding:"required"`
+		SourceLocID int     `json:"source_location_id" binding:"required"`
+		DestLocID   int     `json:"dest_location_id" binding:"required"` // e.g., a 'Customer' or 'Scrap' location
+		Quantity    float64 `json:"quantity" binding:"required,gt=0"`
+		Reference   string  `json:"reference"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -33,75 +32,63 @@ func ProcessStockDraw(c *gin.Context) {
 	db, _ := database.IntialDB()
 
 	// 2. Transactional Operation
-	// We use a transaction to ensure Stock is updated AND the Draw record is created together
 	err := db.Transaction(func(tx *gorm.DB) error {
-		var stock models.Stock
+		// Calculate current stock at source to ensure availability
+		// Sum(dest_qty) - Sum(src_qty)
+		var incoming, outgoing float64
+		tx.Model(&models.StockMove{}).Where("variant_id = ? AND dest_location_id = ? AND tenant_id = ?",
+			body.VariantID, body.SourceLocID, tenantID).Select("COALESCE(SUM(qty), 0)").Scan(&incoming)
+		tx.Model(&models.StockMove{}).Where("variant_id = ? AND src_location_id = ? AND tenant_id = ?",
+			body.VariantID, body.SourceLocID, tenantID).Select("COALESCE(SUM(qty), 0)").Scan(&outgoing)
 
-		// Find current stock in the specific warehouse
-		if err := tx.Where("product_id = ? AND warehouse_id = ? AND tenant_id = ?",
-			body.ProductID, body.WarehouseID, tenantID).First(&stock).Error; err != nil {
-			return gorm.ErrRecordNotFound // Or "Insufficient Stock"
+		currentStock := incoming - outgoing
+
+		if currentStock < body.Quantity {
+			return errors.New("insufficient stock at source location")
 		}
 
-		// Check if we have enough
-		if stock.Quantity < body.Quantity {
-			return gorm.ErrInvalidData // Custom error logic
+		// Create the StockMove record (This is your lifecycle audit)
+		move := models.StockMove{
+			TenantID:       tenantID.(int),
+			VariantID:      body.VariantID,
+			SrcLocationID:  body.SourceLocID,
+			DestLocationID: body.DestLocID,
+			UserID:         currentUser.ID,
+			Qty:            body.Quantity,
+			Reference:      body.Reference,
 		}
 
-		// Update Stock Quantity
-		stock.Quantity -= body.Quantity
-		if err := tx.Save(&stock).Error; err != nil {
+		if err := tx.Create(&move).Error; err != nil {
 			return err
 		}
-
-		// Create the Draw record (Audit Trail)
-		draw := models.Draw{
-			Base: models.Base{
-				TenantID: tenantID,
-			},
-			Product_Id: body.ProductID, // Adjusted to match your schema naming
-			Stock:      float32(body.Quantity),
-			User_Id:    currentUser.ID,
-		}
-
-		if err := tx.Create(&draw).Error; err != nil {
-			return err
-		}
-
-		// Log into Tracker as well
-		tracker := models.Tracker{
-			Base:   models.Base{TenantID: tenantID},
-			UserID: currentUser.ID,
-			Event:  "STOCK_WITHDRAWAL",
-		}
-		tx.Create(&tracker)
 
 		return nil
 	})
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed: stock may be insufficient"})
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Stock withdrawal successful"})
+	c.JSON(http.StatusOK, gin.H{"message": "Stock movement processed successfully"})
 }
 
 func GetDraws(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
+	tenantID, _ := c.Get("tenantID")
 	db, _ := database.IntialDB()
 
-	var draws []models.Draw
+	var moves []models.StockMove
 
-	// Preload Product and User data for the frontend
-	result := db.Preload("Product").Preload("User").
+	// Preload Variant and User for a detailed UI audit log
+	result := db.Preload("Variant").Preload("User").
 		Where("tenant_id = ?", tenantID).
-		Find(&draws)
+		Order("created_at desc").
+		Find(&moves)
 
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch withdrawal logs"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch logs"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"result": draws})
+	c.JSON(http.StatusOK, gin.H{"result": moves})
 }

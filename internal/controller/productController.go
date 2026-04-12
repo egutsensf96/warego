@@ -6,22 +6,19 @@ import (
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 func CreateProduct(c *gin.Context) {
-	// 1. Get Context from Middleware
-	tenantIDStr := c.GetString("tenantID")
-	tenantID, _ := uuid.Parse(tenantIDStr)
-
-	val, _ := c.Get("user")
-	currentUser := val.(models.User)
+	// 1. Get Context (Assumes Middleware sets these as int and models.User)
+	tenantID, _ := c.Get("tenantID")
 
 	var body struct {
-		SKU         string    `json:"sku" binding:"required"`
-		Description string    `json:"description" binding:"required"`
-		Cost        float64   `json:"cost" binding:"required,gte=0"`
-		CategoryID  uuid.UUID `json:"category_id" binding:"required"`
+		Name        string  `json:"name" binding:"required"`
+		CategoryID  int     `json:"category_id" binding:"required"`
+		SKU         string  `json:"sku" binding:"required"`
+		CostPrice   float64 `json:"cost_price" binding:"required,gte=0"`
+		ListPrice   float64 `json:"list_price" binding:"required,gte=0"`
+		ImageBase64 string  `json:"image_base64"` // Requirement: Codec Base64
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -31,36 +28,51 @@ func CreateProduct(c *gin.Context) {
 
 	db, _ := database.IntialDB()
 
-	// 2. Build product model
-	// Note: Field changed from User_Id to UserID to match the struct
-	product := models.Product{
-		Base: models.Base{
-			TenantID: tenantID,
-		},
-		SKU:         body.SKU,
-		Description: body.Description,
-		Cost:        body.Cost,
+	// 2. Build the Product Template and Variant (Odoo Structure)
+	template := models.ProductTemplate{
+		TenantID:    tenantID.(int),
 		CategoryID:  body.CategoryID,
-		UserID:      currentUser.ID,
+		Name:        body.Name,
+		ImageBase64: body.ImageBase64,
+		Type:        "storable", // Default for inventory
 	}
 
-	// 3. Save to DB
-	if result := db.Create(&product); result.Error != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "SKU already exists for this tenant or invalid category"})
+	// Save template first to get ID
+	if err := db.Create(&template).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Invalid category or template data"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"data": product})
+	variant := models.ProductVariant{
+		TemplateID: template.ID,
+		TenantID:   tenantID.(int),
+		SKU:        body.SKU,
+		CostPrice:  body.CostPrice,
+		ListPrice:  body.ListPrice,
+		Active:     true,
+	}
+
+	if err := db.Create(&variant).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "SKU already exists for this tenant"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Product and Variant created",
+		"data":    variant,
+	})
 }
 
 func GetProducts(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
+	tenantID, _ := c.Get("tenantID")
 	db, _ := database.IntialDB()
 
-	var products []models.Product
+	var products []models.ProductTemplate
 
-	// Preload Category relationship
-	result := db.Preload("Category").Where("tenant_id = ?", tenantID).Find(&products)
+	// Preload Category and Variants (Hierarchical Odoo style)
+	result := db.Preload("Category").Preload("Variants").
+		Where("tenant_id = ?", tenantID).
+		Find(&products)
 
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching products"})
@@ -71,13 +83,13 @@ func GetProducts(c *gin.Context) {
 }
 
 func UpdateProduct(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
-	id := c.Param("id")
+	tenantID, _ := c.Get("tenantID")
+	variantID := c.Param("id")
 
 	var body struct {
-		Description string    `json:"description"`
-		Cost        float64   `json:"cost"`
-		CategoryID  uuid.UUID `json:"category_id"`
+		CostPrice float64 `json:"cost_price"`
+		ListPrice float64 `json:"list_price"`
+		Active    bool    `json:"active"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -87,13 +99,13 @@ func UpdateProduct(c *gin.Context) {
 
 	db, _ := database.IntialDB()
 
-	// Safe update scoped by ID and TenantID
-	result := db.Model(&models.Product{}).
-		Where("id = ? AND tenant_id = ?", id, tenantID).
-		Updates(models.Product{
-			Description: body.Description,
-			Cost:        body.Cost,
-			CategoryID:  body.CategoryID,
+	// Scoped update for Variant
+	result := db.Model(&models.ProductVariant{}).
+		Where("id = ? AND tenant_id = ?", variantID, tenantID).
+		Updates(models.ProductVariant{
+			CostPrice: body.CostPrice,
+			ListPrice: body.ListPrice,
+			Active:    body.Active,
 		})
 
 	if result.Error != nil {
@@ -102,26 +114,26 @@ func UpdateProduct(c *gin.Context) {
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found in your instance"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Product variant not found in your instance"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"msg": "Product updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"msg": "Product variant updated successfully"})
 }
 
 func DeleteProduct(c *gin.Context) {
-	tenantID := c.GetString("tenantID")
-	id := c.Param("id")
+	tenantID, _ := c.Get("tenantID")
+	templateID := c.Param("id")
 
 	db, _ := database.IntialDB()
 
-	// Soft delete
-	result := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&models.Product{})
+	// Scoped delete for Template (Cascades to Variants depending on DB setup)
+	result := db.Where("id = ? AND tenant_id = ?", templateID, tenantID).Delete(&models.ProductTemplate{})
 
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete failed"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"msg": "Product deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"msg": "Product template deleted successfully"})
 }

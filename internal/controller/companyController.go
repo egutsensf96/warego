@@ -6,21 +6,24 @@ import (
 	"github.com/egutsenf96/warego/internal/database"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // GetCompanyProfile returns the details of the current tenant's company
 func GetCompanyProfile(c *gin.Context) {
-	tenantIDStr := c.GetString("tenantID")
+	// 1. Retrieve the tenantID from context (Middleware should set this as int)
+	tenantID, exists := c.Get("tenantID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No tenant context found"})
+		return
+	}
+
 	db, _ := database.IntialDB()
 
-	var company models.Company
+	// In our schema, the model is named 'Tenant'
+	var company models.Tenant
 
-	// We search by ID using the tenantID because in a multi-tenant
-	// setup, the TenantID is the ID of the company record itself.
-	result := db.Where("id = ?", tenantIDStr).First(&company)
-
-	if result.Error != nil {
+	// We search by ID because the Tenant's primary key is the identifier
+	if err := db.First(&company, tenantID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Company profile not found"})
 		return
 	}
@@ -30,12 +33,15 @@ func GetCompanyProfile(c *gin.Context) {
 
 // UpdateCompany updates the corporate information for the current instance
 func UpdateCompany(c *gin.Context) {
-	tenantIDStr := c.GetString("tenantID")
+	tenantID, exists := c.Get("tenantID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No tenant context found"})
+		return
+	}
 
 	var body struct {
-		Name        string `json:"name"`
-		TaxID       string `json:"tax_id"`
-		Description string `json:"description"`
+		Name  string `json:"name"`
+		TaxID string `json:"tax_id"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -45,13 +51,12 @@ func UpdateCompany(c *gin.Context) {
 
 	db, _ := database.IntialDB()
 
-	// Scoped update to ensure a user only updates their own company
-	result := db.Model(&models.Company{}).
-		Where("id = ?", tenantIDStr).
-		Updates(models.Company{
-			Name:        body.Name,
-			TaxID:       body.TaxID,
-			Description: body.Description,
+	// Perform a scoped update
+	result := db.Model(&models.Tenant{}).
+		Where("id = ?", tenantID).
+		Updates(models.Tenant{
+			Name:  body.Name,
+			TaxID: body.TaxID,
 		})
 
 	if result.Error != nil {
@@ -67,8 +72,7 @@ func UpdateCompany(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Company updated successfully"})
 }
 
-// CreateCompany is usually a super-admin function used during "Sign Up"
-// or when onboarding a new business instance.
+// CreateCompany is used during onboarding a new business instance.
 func CreateCompany(c *gin.Context) {
 	var body struct {
 		Name  string `json:"name" binding:"required"`
@@ -82,14 +86,9 @@ func CreateCompany(c *gin.Context) {
 
 	db, _ := database.IntialDB()
 
-	// In a new company creation, we generate a new TenantID
-	newTenantID := uuid.New()
-
-	company := models.Company{
-		Base: models.Base{
-			ID:       newTenantID, // The Company ID IS the TenantID
-			TenantID: newTenantID,
-		},
+	// In an integer SERIAL setup, Postgres generates the ID automatically.
+	// We don't need to manually generate a UUID.
+	company := models.Tenant{
 		Name:  body.Name,
 		TaxID: body.TaxID,
 	}
@@ -99,8 +98,9 @@ func CreateCompany(c *gin.Context) {
 		return
 	}
 
+	// After Create, company.ID is populated by GORM/Postgres
 	c.JSON(http.StatusCreated, gin.H{
 		"message":   "Company instance created",
-		"tenant_id": newTenantID,
+		"tenant_id": company.ID,
 	})
 }
