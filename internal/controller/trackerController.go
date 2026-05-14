@@ -1,72 +1,100 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/egutsenf96/warego/internal/database"
+	"github.com/egutsenf96/warego/internal/middleware"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-func GetWarehouses(c *gin.Context) {
+// GetAuditLogs retrieves stock transactions (audit trail) for the authenticated tenant
+// Endpoint: GET /api/v1/admin/tracker
+func GetAuditLogs(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
 
-	// Retrieve the tenantID from the JWT context
-	tenantID := c.MustGet("tenantID").(string)
+	// Start query with tenant isolation
+	query := db.Where("tenant_id = ?", tenantID).
+		Preload("Product").
+		Preload("Warehouse").
+		Preload("User").
+		Preload("Supplier")
 
-	// We define only the slice we actually need
-	var list []models.Warehouse
-
-	// Fetch warehouses belonging to this tenant
-	if err := db.Where("tenant_id = ?", tenantID).Find(&list).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch warehouses"})
-		return
+	// Optional filtering via query params
+	actionFilter := c.Query("type") // e.g., "INITIAL", "ADJUST", "DRAW"
+	if actionFilter != "" {
+		query = query.Where("type = ?", models.StockTransactionType(actionFilter))
 	}
 
-	c.JSON(http.StatusOK, list)
-}
-
-// GetAuditLogs retrieves the history of actions performed within the tenant's instance
-func GetAuditLogs(c *gin.Context) {
-	// 1. Get TenantID from the middleware context (Ensuring it's an int)
-	tenantID, exists := c.Get("tenantID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tenant context missing"})
-		return
+	productFilter := c.Query("product_id")
+	if productFilter != "" {
+		if pid, err := uuid.Parse(productFilter); err == nil {
+			query = query.Where("product_id = ?", pid)
+		}
 	}
 
-	db, err := database.IntialDB()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection error"})
-		return
+	// Date range filter
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	if startDate != "" {
+		if start, err := time.Parse(time.RFC3339, startDate); err == nil {
+			query = query.Where("created_at >= ?", start)
+		}
+	}
+	if endDate != "" {
+		if end, err := time.Parse(time.RFC3339, endDate); err == nil {
+			query = query.Where("created_at <= ?", end)
+		}
 	}
 
-	var logs []models.Tracker
-
-	// 2. Query with Preload and Scoping
-	// We cast tenantID to (int) to match the database column type
-	result := db.Preload("User").
-		Where("tenant_id = ?", tenantID.(int)).
-		Order("created_at desc"). // Standard ERP practice: Newest first
-		Limit(200).               // Increased limit slightly for better visibility
-		Find(&logs)
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve audit logs"})
-		return
+	// Pagination
+	page := 1
+	limit := 20
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
 	}
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+		if limit > 100 {
+			limit = 100 // Cap max limit
+		}
+	}
+	offset := (page - 1) * limit
 
-	// 3. Logic check for empty logs
-	if len(logs) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "No activity recorded yet",
-			"result":  []models.Tracker{},
+	// Get total count
+	var total int64
+	query.Model(&models.StockTransaction{}).Count(&total)
+
+	// Fetch paginated results
+	var transactions []models.StockTransaction
+	if err := query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&transactions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to fetch audit logs",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"count":  len(logs),
-		"result": logs,
+		"success": true,
+		"data": gin.H{
+			"transactions": transactions,
+			"pagination": gin.H{
+				"page":     page,
+				"limit":    limit,
+				"total":    total,
+				"pages":    (int(total) + limit - 1) / limit,
+				"has_next": offset+limit < int(total),
+				"has_prev": page > 1,
+			},
+		},
 	})
 }

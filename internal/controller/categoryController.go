@@ -1,91 +1,146 @@
+// internal/controller/categoryController.go
 package controller
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/egutsenf96/warego/internal/database"
+	"github.com/egutsenf96/warego/internal/middleware"
 	"github.com/egutsenf96/warego/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
-// GetCategories retrieves all categories for the authenticated tenant
+// GetCategories obtiene todas las categorías del tenant actual
 func GetCategories(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
-	tenantID := c.MustGet("tenantID").(string)
 
 	var categories []models.Category
-	if err := db.Where("tenant_id = ?", tenantID).Find(&categories).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve categories"})
+	if err := db.Where("tenant_id = ?", tenantID).Order("name ASC").Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al obtener categorías"})
 		return
 	}
 
-	c.JSON(http.StatusOK, categories)
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"categories": categories,
+	})
 }
 
-// AddCategory creates a new product category
-func AddCategory(c *gin.Context) {
-	var category models.Category
-	if err := c.ShouldBindJSON(&category); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Lock the category to the current tenant
-	tenantIDStr := c.MustGet("tenantID").(string)
-	category.TenantID = uuid.MustParse(tenantIDStr)
-
+// GetCategory obtiene una categoría específica por ID
+func GetCategory(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
-	if err := db.Create(&category).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create category"})
+
+	var category models.Category
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&category).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Categoría no encontrada"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al buscar categoría"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, category)
+	c.JSON(http.StatusOK, gin.H{"success": true, "category": category})
 }
 
-// UpdateCategory updates a specific category name or details
+// AddCategory crea una nueva categoría (Sujeto al tenant actual)
+func AddCategory(c *gin.Context) {
+	tenantIDStr := middleware.GetTenantID(c)
+	tenantUUID, _ := uuid.Parse(tenantIDStr)
+
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "El nombre es obligatorio"})
+		return
+	}
+
+	category := models.Category{
+		Name:        strings.TrimSpace(req.Name),
+		Description: strings.TrimSpace(req.Description),
+		TenantID:    tenantUUID,
+	}
+
+	if err := database.GetDB().Create(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al guardar la categoría"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"success": true, "category": category})
+}
+
+// UpdateCategory actualiza una categoría existente
 func UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := c.MustGet("tenantID").(string)
+	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
 
 	var category models.Category
-	// Verify ownership before updating
 	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&category).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found"})
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Categoría no encontrada"})
 		return
 	}
 
-	if err := c.ShouldBindJSON(&category); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Datos inválidos"})
 		return
 	}
 
-	db.Save(&category)
-	c.JSON(http.StatusOK, category)
+	if req.Name != "" {
+		category.Name = strings.TrimSpace(req.Name)
+	}
+	category.Description = strings.TrimSpace(req.Description)
+
+	if err := db.Save(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al actualizar"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "category": category})
 }
 
-// DeleteCategory removes a category (Soft Delete)
+// DeleteCategory elimina una categoría si no tiene productos asociados
 func DeleteCategory(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := c.MustGet("tenantID").(string)
+	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
 
-	// Check if any products are still using this category before deleting (optional but recommended)
+	// Validación de seguridad: Verificar si la categoría pertenece al tenant
+	var category models.Category
+	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&category).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Categoría no encontrada"})
+		return
+	}
+
+	// Integridad Referencial: No borrar si hay productos usándola
 	var productCount int64
 	db.Model(&models.Product{}).Where("category_id = ? AND tenant_id = ?", id, tenantID).Count(&productCount)
 	if productCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete category while it still contains products"})
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "No se puede eliminar: existen productos asociados a esta categoría",
+		})
 		return
 	}
 
-	result := db.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&models.Category{})
-
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found or unauthorized"})
+	if err := db.Delete(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al eliminar"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Category deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Categoría eliminada correctamente"})
 }
