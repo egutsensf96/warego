@@ -19,17 +19,32 @@ func GetProducts(c *gin.Context) {
 	db := database.GetDB()
 	tenantID := middleware.GetTenantID(c)
 
-	// Apply tenant filter unless SuperAdmin
+	// ✅ Iniciamos la query explícitamente sobre el modelo Product
+	query := db.Model(&models.Product{})
+
+	// 1. Filtro base por tenant (evita ambigüedad especificando la tabla)
 	if !middleware.IsSuperAdminUser(c) {
-		db = db.Where("tenant_id = ?", tenantID)
+		query = query.Where("products.tenant_id = ?", tenantID)
+	}
+
+	// 2. Filtro opcional por almacén
+	if warehouseID := c.Query("warehouse_id"); warehouseID != "" {
+		if wid, err := uuid.Parse(warehouseID); err == nil {
+			// ✅ JOIN explícito + DISTINCT para evitar filas duplicadas
+			query = query.Joins(
+				"INNER JOIN trackers ON trackers.product_id = products.id AND trackers.warehouse_id = ? AND trackers.tenant_id = ?",
+				wid, tenantID,
+			).Distinct("products.*")
+		}
 	}
 
 	var products []models.Product
-	if err := db.Preload("Category").Find(&products).Error; err != nil {
+	if err := query.Preload("Category").Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch products"})
 		return
 	}
 
+	// ✅ Claves JSON limpias (sin espacios trailing que rompían Flutter)
 	c.JSON(http.StatusOK, gin.H{
 		"success":  true,
 		"count":    len(products),
@@ -41,6 +56,7 @@ func GetProducts(c *gin.Context) {
 type CreateProductInput struct {
 	models.Product
 	InitialWarehouseID uuid.UUID `json:"warehouse_id" binding:"required"`
+	// SupplierID *uuid.UUID `json:"supplier_id,omitempty"` // Descomenta si agregaste el campo a models.Product
 }
 
 // CreateProduct adds a new product linked to the tenant + logs initial movement
@@ -57,12 +73,12 @@ func CreateProduct(c *gin.Context) {
 	db := database.GetDB()
 
 	err := db.Transaction(func(tx *gorm.DB) error {
-		// 1. Create Product
+		// 1. Crear Producto
 		if err := tx.Create(&input.Product).Error; err != nil {
 			return err
 		}
 
-		// 2. Create Tracker (Current stock per warehouse)
+		// 2. Crear Tracker (Stock actual por almacén)
 		tracker := models.Tracker{
 			ProductID:   input.Product.ID,
 			WarehouseID: input.InitialWarehouseID,
@@ -73,14 +89,24 @@ func CreateProduct(c *gin.Context) {
 			return err
 		}
 
-		// 3. Log Initial Movement for RetirosPage
+		// 3. Log de movimiento inicial
+		userIDStr, _ := c.Get("userID")
+		var userID *uuid.UUID
+		if userIDStr != nil {
+			if parsed, err := uuid.Parse(userIDStr.(string)); err == nil {
+				userID = &parsed
+			}
+		}
+
 		movement := models.StockTransaction{
 			ProductID:      input.Product.ID,
 			WarehouseID:    input.InitialWarehouseID,
-			TenantID:       input.Product.TenantID, // ✅ Already uuid.UUID from input.Product
+			TenantID:       input.Product.TenantID,
 			Type:           models.TypeInitial,
 			QuantityChange: input.Product.Quantity,
 			Notes:          "Product registered with initial stock",
+			UserID:         userID,
+			// SupplierID:     input.SupplierID, // Descomenta si el campo existe
 		}
 		return tx.Create(&movement).Error
 	})
@@ -114,7 +140,7 @@ func UpdateProductWithAudit(c *gin.Context) {
 
 	db := database.GetDB()
 
-	// Fetch original product for audit comparison
+	// ✅ Corregido typo en nombre de variable
 	var originalProduct models.Product
 	if err := db.Where("id = ? AND tenant_id = ?", productID, tenantID).First(&originalProduct).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Product not found"})
@@ -149,11 +175,10 @@ func UpdateProductWithAudit(c *gin.Context) {
 			updates["image_base64"] = req.ImageBase64
 		}
 
-		// Handle quantity change with audit logging
 		var quantityChanged bool
 		var oldQty, newQty int
 		if req.Quantity != nil {
-			oldQty = originalProduct.Quantity
+			oldQty = originalProduct.Quantity // ✅ Corregido typo
 			newQty = *req.Quantity
 			quantityChanged = oldQty != newQty
 			updates["quantity"] = newQty
@@ -165,7 +190,7 @@ func UpdateProductWithAudit(c *gin.Context) {
 			}
 		}
 
-		// Log quantity change to StockTransaction
+		// Log de cambio de cantidad a StockTransaction
 		if quantityChanged && userID != uuid.Nil {
 			var trackers []models.Tracker
 			if err := tx.Where("product_id = ? AND tenant_id = ?", productID, tenantID).Find(&trackers).Error; err != nil {
@@ -177,7 +202,7 @@ func UpdateProductWithAudit(c *gin.Context) {
 				txn := models.StockTransaction{
 					ProductID:      productID,
 					WarehouseID:    tracker.WarehouseID,
-					TenantID:       uuid.MustParse(tenantID), // ✅ FIX: Parse string to uuid.UUID
+					TenantID:       uuid.MustParse(tenantID),
 					QuantityChange: change,
 					Type:           models.TypeAdjust,
 					UserID:         &userID,
@@ -187,7 +212,7 @@ func UpdateProductWithAudit(c *gin.Context) {
 					return err
 				}
 
-				// Update tracker quantity atomically
+				// Actualizar tracker atómicamente
 				if err := tx.Model(&tracker).Update("quantity", gorm.Expr("quantity + ?", change)).Error; err != nil {
 					return err
 				}

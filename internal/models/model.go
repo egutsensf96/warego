@@ -44,8 +44,10 @@ type User struct {
 	ImageBase64 string     `gorm:"type:text" json:"image_base64,omitempty"`
 	IsActive    bool       `gorm:"default:true" json:"is_active"`
 	LastLogin   *time.Time `gorm:"type:timestamptz" json:"last_login,omitempty"`
+	WarehouseID *uuid.UUID `gorm:"type:uuid;index" json:"warehouse_id,omitempty"`
 	Role        *Role      `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 	Tenant      *Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
+	Warehouse   *Warehouse `gorm:"foreignKey:WarehouseID" json:"warehouse,omitempty"`
 }
 
 type Category struct {
@@ -59,14 +61,15 @@ type Category struct {
 
 type Product struct {
 	Base
-	Name        string    `gorm:"not null" json:"name"`
-	SKU         string    `gorm:"unique;not null" json:"sku"`
-	Quantity    int       `gorm:"default:0" json:"quantity"`
-	ImageBase64 string    `gorm:"type:text" json:"image_base64,omitempty"`
-	CategoryID  uuid.UUID `gorm:"type:uuid" json:"category_id"`
-	TenantID    uuid.UUID `gorm:"type:uuid;not null;index" json:"tenant_id"`
-	Category    Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	Tenant      Tenant    `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
+	Name        string     `gorm:"not null" json:"name"`
+	SKU         string     `gorm:"unique;not null" json:"sku"`
+	Quantity    int        `gorm:"default:0" json:"quantity"`
+	ImageBase64 string     `gorm:"type:text" json:"image_base64,omitempty"`
+	CategoryID  uuid.UUID  `gorm:"type:uuid" json:"category_id"`
+	TenantID    uuid.UUID  `gorm:"type:uuid;not null;index" json:"tenant_id"`
+	Category    Category   `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	Tenant      Tenant     `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
+	SupplierID  *uuid.UUID `gorm:"type:uuid" json:"supplier_id,omitempty"`
 }
 
 type Supplier struct {

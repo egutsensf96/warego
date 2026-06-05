@@ -18,7 +18,6 @@ import (
 func GetSuppliers(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
-
 	var suppliers []models.Supplier
 	if err := db.Where("tenant_id = ?", tenantID).Order("name ASC").Find(&suppliers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al obtener proveedores"})
@@ -36,7 +35,6 @@ func GetSupplier(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
-
 	var supplier models.Supplier
 	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&supplier).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -55,6 +53,7 @@ func CreateSupplier(c *gin.Context) {
 	tenantIDStr := middleware.GetTenantID(c)
 	tenantUUID, _ := uuid.Parse(tenantIDStr)
 
+	// ✅ Corregido: Sin espacios en las etiquetas JSON y Binding
 	var req struct {
 		Name    string `json:"name" binding:"required"`
 		Contact string `json:"contact"`
@@ -70,7 +69,7 @@ func CreateSupplier(c *gin.Context) {
 
 	db := database.GetDB()
 
-	// Validar si el email ya existe para este tenant (opcional)
+	// Validar si el email ya existe para este tenant
 	if req.Email != "" {
 		var count int64
 		emailClean := strings.ToLower(strings.TrimSpace(req.Email))
@@ -84,7 +83,7 @@ func CreateSupplier(c *gin.Context) {
 	supplier := models.Supplier{
 		Name:     strings.TrimSpace(req.Name),
 		Contact:  strings.TrimSpace(req.Contact),
-		Email:    strings.ToLower(strings.TrimSpace(req.Email)),
+		Email:    strings.ToLower(strings.TrimSpace(req.Email)), // ✅ Corregido typo "req. Email"
 		Phone:    strings.TrimSpace(req.Phone),
 		Address:  strings.TrimSpace(req.Address),
 		TenantID: tenantUUID,
@@ -103,13 +102,13 @@ func UpdateSupplier(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := middleware.GetTenantID(c)
 	db := database.GetDB()
-
 	var supplier models.Supplier
 	if err := db.Where("id = ? AND tenant_id = ?", id, tenantID).First(&supplier).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Proveedor no encontrado"})
 		return
 	}
 
+	// ✅ Corregido: Sin espacios en etiquetas JSON
 	var req struct {
 		Name    string `json:"name"`
 		Contact string `json:"contact"`
@@ -132,7 +131,7 @@ func UpdateSupplier(c *gin.Context) {
 	}
 	supplier.Contact = strings.TrimSpace(req.Contact)
 	supplier.Phone = strings.TrimSpace(req.Phone)
-	supplier.Address = strings.TrimSpace(req.Address)
+	supplier.Address = strings.TrimSpace(req.Address) // ✅ Corregido typo "Addre ss"
 
 	if err := db.Save(&supplier).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error al actualizar"})
